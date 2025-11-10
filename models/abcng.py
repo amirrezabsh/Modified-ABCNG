@@ -244,29 +244,32 @@ def demo_run():
     start_time = time.time()
 
     tests = [
-        ("sphere", 30, 1_00_00),        # 10000 evals to keep demo fast
-        ("rastrigin", 30, 1_00_00),
-        ("rosenbrock", 30, 1_00_00),
-        ("ackley", 30, 1_00_00),
+        ("sphere", 30, 10000),
+        ("rastrigin", 30, 10000),
+        ("rosenbrock", 30, 10000),
+        ("ackley", 30, 10000),
     ]
-    # adjust default budget down for speed in this demo
+
     for name, dim, budget in tests:
         f, (lo, hi) = BENCHES[name]
-        opt = ABCNG(func=f, dim=dim, bounds=(lo, hi), pop_size=40, max_evals=budget, seed=42)
+        opt = ABCNG(func=f, dim=dim, bounds=(lo, hi),
+                    pop_size=40, max_evals=budget, seed=42)
         gbest, gval, hist = opt.run()
         results.append({
             "function": name,
             "dim": dim,
             "budget": budget,
             "best_f": gval,
-            "neighborhood_k_final": opt.k,
-            "evals": opt.evals,
-            "pop_size": opt.pop_size,
-            "limit": opt.limit,
+            "k_final": opt.k,
+            "evals": opt.evals
         })
 
-    elapsed = time.time() - start_time
     df = pd.DataFrame(results)
-    display_dataframe_to_user("ABCNG quick results", df)
+    print("\n=== ABCNG quick results ===")
+    print(df.to_string(index=False))
+    df.to_csv("abcng_results.csv", index=False)
+    print("\nResults saved to abcng_results.csv")
 
+    elapsed = time.time() - start_time
     return df, elapsed
+
