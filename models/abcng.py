@@ -5,7 +5,6 @@ from typing import Callable, Tuple, List, Dict, Any
 import math
 import time
 import pandas as pd
-from caas_jupyter_tools import display_dataframe_to_user
 
 # -----------------------------
 # Benchmark functions
