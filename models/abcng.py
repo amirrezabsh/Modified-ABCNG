@@ -62,11 +62,12 @@ class ABCNG:
     X: np.ndarray = field(init=False)
     fitness: np.ndarray = field(init=False)
     trials: np.ndarray = field(init=False)
-    k: int = field(init=False)             # neighborhood radius
+    k: np.ndarray = field(init=False)      # per-individual neighborhood radius
     evals: int = field(init=False, default=0)
     gbest: np.ndarray = field(init=False)
     gbest_val: float = field(init=False)
     hist: List[float] = field(init=False, default_factory=list)
+    k_hist: List[float] = field(init=False, default_factory=list)
 
     def __post_init__(self):
         self.rng = np.random.default_rng(self.seed)
@@ -87,11 +88,12 @@ class ABCNG:
         self.gbest_val = float(self.fitness[self.gbest_idx])
 
         # start with the smallest legal neighborhood radius
-        self.k = 1
+        self.k = np.full(self.pop_size, 1, dtype=int)
         self.k_min = 1
         self.k_max = (self.pop_size - 1) // 2
 
         self.hist = [self.gbest_val]
+        self.k_hist = [float(np.mean(self.k))]
 
     # -------------------------
     # Utility methods
@@ -118,8 +120,9 @@ class ABCNG:
         return idx % self.pop_size
 
     def _neighbors_indices(self, i: int) -> List[int]:
-        """Return indices in the k-neighborhood (2k+1 ring topology)."""
-        return [self._ring_index(i + offset) for offset in range(-self.k, self.k + 1)]
+        """Return indices in the k_i-neighborhood (2k_i+1 ring topology)."""
+        ki = int(self.k[i])
+        return [self._ring_index(i + offset) for offset in range(-ki, ki + 1)]
 
     def _outside_indices(self, i: int) -> List[int]:
         """Return indices outside the k-neighborhood (exclude i)."""
@@ -147,8 +150,8 @@ class ABCNG:
             outside = [idx for idx in range(self.pop_size) if idx != ni]
         no = int(self.rng.choice(outside))
 
-        phi = self.rng.uniform(-1.0, 1.0, size=self.dim)  # φ in [-1,1]
-        varphi = self.rng.uniform(0.0, 1.5, size=self.dim)  # ϕ in [0,1.5]
+        phi = self.rng.uniform(-1.0, 1.0, size=self.dim)  # phi in [-1, 1]
+        varphi = self.rng.uniform(0.0, 1.5, size=self.dim)  # varphi in [0, 1.5]
 
         xni = self.X[ni]
         xno = self.X[no]
@@ -158,7 +161,7 @@ class ABCNG:
         return np.clip(v, self.lower, self.upper)
 
     def _gaussian_perturb(self, xi: np.ndarray, delta_i: float, delta_a: float) -> np.ndarray:
-        """Equation (10): v = x * (1 + N(mean=δi, std=δa)) (ABCNG-ia)."""
+        """Equation (10): v = x * (1 + N(mean=delta_i, std=delta_a)) (ABCNG-ia)."""
         if delta_a < 1e-12:
             # avoid zero std -> use a tiny noise
             delta_a = 1e-12
@@ -166,11 +169,24 @@ class ABCNG:
         v = xi * (1.0 + noise)
         return np.clip(v, self.lower, self.upper)
 
-    def _update_k(self, improved: bool):
+    def _update_k(self, i: int, improved: bool):
         if improved:
-            self.k = min(self.k + 1, self.k_max)
+            self.k[i] = min(int(self.k[i]) + 1, self.k_max)
         else:
-            self.k = max(self.k - 1, self.k_min)
+            self.k[i] = max(int(self.k[i]) - 1, self.k_min)
+
+    def _probabilities(self) -> np.ndarray:
+        """Map objective values to onlooker selection probabilities (standard ABC)."""
+        fit_values = np.empty(self.pop_size, dtype=float)
+        for idx, fval in enumerate(self.fitness):
+            if fval >= 0:
+                fit_values[idx] = 1.0 / (1.0 + fval)
+            else:
+                fit_values[idx] = 1.0 + abs(fval)
+        total = float(np.sum(fit_values))
+        if total <= 0.0:
+            return np.full(self.pop_size, 1.0 / self.pop_size)
+        return fit_values / total
 
     def _scout_if_needed(self, i: int):
         if self.trials[i] >= self.limit:
@@ -194,25 +210,32 @@ class ABCNG:
                 v = self._search_eq(i)
                 fv = self._evaluate(v)
                 improved = self._greedy(i, v, fv)
-                self._update_k(improved)
+                self._update_k(i, improved)
                 self._scout_if_needed(i)
 
             # Record previous fitness for evolutionary rates (onlooker phase uses last iteration values)
             prev_fit = self.fitness.copy()
 
-            # --- Onlooker bee phase (no roulette; visit each solution again) ---
-            for i in range(self.pop_size):
+            # --- Onlooker bee phase (roulette selection over sources) ---
+            probs = self._probabilities()
+            onlookers = 0
+            idx = 0
+            while onlookers < self.pop_size:
                 if self.evals >= self.max_evals:
                     break
-                # attempt neighborhood search again
+                i = idx % self.pop_size
+                idx += 1
+                if self.rng.random() > probs[i]:
+                    continue
+                onlookers += 1
+
                 v = self._search_eq(i)
                 fv = self._evaluate(v)
                 improved = self._greedy(i, v, fv)
-                self._update_k(improved)
+                self._update_k(i, improved)
 
                 if not improved and self.evals < self.max_evals:
-                    # Compute evolutionary rates δi and δa (based on prev_fit vs current)
-                    # Avoid division by zero by adding tiny epsilon
+                    # Compute evolutionary rates delta_i and delta_a (based on prev_fit vs current)
                     eps = 1e-12
                     delta_i = (self.fitness[i] - prev_fit[i]) / (self.fitness[i] + eps)
                     delta_all = (self.fitness - prev_fit) / (self.fitness + eps)
@@ -222,14 +245,15 @@ class ABCNG:
                     gp = self._gaussian_perturb(self.X[i], delta_i, delta_a)
                     fgp = self._evaluate(gp)
                     improved2 = self._greedy(i, gp, fgp)
-                    self._update_k(improved2)
+                    self._update_k(i, improved2)
 
                 self._scout_if_needed(i)
 
             # --- Scout phase enforcement already handled inside loops ---
 
-            # store best
+            # store best and neighborhood size summary
             self.hist.append(self.gbest_val)
+            self.k_hist.append(float(np.mean(self.k)))
 
         return self.gbest.copy(), float(self.gbest_val), list(self.hist)
 
@@ -259,7 +283,7 @@ def demo_run():
             "dim": dim,
             "budget": budget,
             "best_f": gval,
-            "k_final": opt.k,
+            "k_mean_final": float(np.mean(opt.k)),
             "evals": opt.evals
         })
 
