@@ -54,6 +54,7 @@ class ABCNG:
     limit: int = None   # default SN * D
     max_evals: int = None  # default 5000 * D
     seed: int = None
+    paper_mode: bool = False  # enforce settings exactly as described in the paper
 
     # internal state (filled in __post_init__)
     rng: np.random.Generator = field(init=False)
@@ -70,12 +71,15 @@ class ABCNG:
     k_hist: List[float] = field(init=False, default_factory=list)
 
     def __post_init__(self):
+        if self.paper_mode:
+            # Paper configuration: SN=50, limit = SN*D, max_evals = 5000*D
+            self.pop_size = 50
         self.rng = np.random.default_rng(self.seed)
         self.lower = np.full(self.dim, self.bounds[0], dtype=float)
         self.upper = np.full(self.dim, self.bounds[1], dtype=float)
-        if self.limit is None:
+        if self.limit is None or self.paper_mode:
             self.limit = self.pop_size * self.dim
-        if self.max_evals is None:
+        if self.max_evals is None or self.paper_mode:
             self.max_evals = 5000 * self.dim
 
         # init population
@@ -216,38 +220,58 @@ class ABCNG:
             # Record previous fitness for evolutionary rates (onlooker phase uses last iteration values)
             prev_fit = self.fitness.copy()
 
-            # --- Onlooker bee phase (roulette selection over sources) ---
-            probs = self._probabilities()
-            onlookers = 0
-            idx = 0
-            while onlookers < self.pop_size:
-                if self.evals >= self.max_evals:
-                    break
-                i = idx % self.pop_size
-                idx += 1
-                if self.rng.random() > probs[i]:
-                    continue
-                onlookers += 1
+            if self.paper_mode:
+                # --- Onlooker bee phase (paper description: visit each source once) ---
+                for i in range(self.pop_size):
+                    if self.evals >= self.max_evals:
+                        break
+                    v = self._search_eq(i)
+                    fv = self._evaluate(v)
+                    improved = self._greedy(i, v, fv)
+                    self._update_k(i, improved)
 
-                v = self._search_eq(i)
-                fv = self._evaluate(v)
-                improved = self._greedy(i, v, fv)
-                self._update_k(i, improved)
+                    if not improved and self.evals < self.max_evals:
+                        eps = 1e-12
+                        delta_i = (self.fitness[i] - prev_fit[i]) / (self.fitness[i] + eps)
+                        delta_all = (self.fitness - prev_fit) / (self.fitness + eps)
+                        delta_a = float(np.mean(delta_all))
 
-                if not improved and self.evals < self.max_evals:
-                    # Compute evolutionary rates delta_i and delta_a (based on prev_fit vs current)
-                    eps = 1e-12
-                    delta_i = (self.fitness[i] - prev_fit[i]) / (self.fitness[i] + eps)
-                    delta_all = (self.fitness - prev_fit) / (self.fitness + eps)
-                    delta_a = float(np.mean(delta_all))
+                        gp = self._gaussian_perturb(self.X[i], delta_i, delta_a)
+                        fgp = self._evaluate(gp)
+                        self._greedy(i, gp, fgp)
 
-                    # Gaussian perturbation
-                    gp = self._gaussian_perturb(self.X[i], delta_i, delta_a)
-                    fgp = self._evaluate(gp)
-                    improved2 = self._greedy(i, gp, fgp)
-                    self._update_k(i, improved2)
+                    self._scout_if_needed(i)
+            else:
+                # --- Onlooker bee phase (roulette selection over sources) ---
+                probs = self._probabilities()
+                onlookers = 0
+                idx = 0
+                while onlookers < self.pop_size:
+                    if self.evals >= self.max_evals:
+                        break
+                    i = idx % self.pop_size
+                    idx += 1
+                    if self.rng.random() > probs[i]:
+                        continue
+                    onlookers += 1
 
-                self._scout_if_needed(i)
+                    v = self._search_eq(i)
+                    fv = self._evaluate(v)
+                    improved = self._greedy(i, v, fv)
+                    self._update_k(i, improved)
+
+                    if not improved and self.evals < self.max_evals:
+                        eps = 1e-12
+                        delta_i = (self.fitness[i] - prev_fit[i]) / (self.fitness[i] + eps)
+                        delta_all = (self.fitness - prev_fit) / (self.fitness + eps)
+                        delta_a = float(np.mean(delta_all))
+
+                        gp = self._gaussian_perturb(self.X[i], delta_i, delta_a)
+                        fgp = self._evaluate(gp)
+                        improved2 = self._greedy(i, gp, fgp)
+                        self._update_k(i, improved2)
+
+                    self._scout_if_needed(i)
 
             # --- Scout phase enforcement already handled inside loops ---
 
@@ -256,7 +280,6 @@ class ABCNG:
             self.k_hist.append(float(np.mean(self.k)))
 
         return self.gbest.copy(), float(self.gbest_val), list(self.hist)
-
 
 # -----------------------------
 # Helper: run a quick demo on a few benchmarks
@@ -295,4 +318,6 @@ def demo_run():
 
     elapsed = time.time() - start_time
     return df, elapsed
+
+
 
