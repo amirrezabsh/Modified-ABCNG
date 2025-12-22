@@ -55,6 +55,13 @@ class ABCNG:
     max_evals: int = None  # default 5000 * D
     seed: int = None
     paper_mode: bool = False  # enforce settings exactly as described in the paper
+    use_gbest: bool = True
+    use_adaptive_k: bool = True
+    use_gaussian: bool = True
+    neighbor_mode: str = "neighbor"  # "neighbor" or "self"
+    noise_model: str = "gaussian"    # "gaussian", "cauchy", "uniform"
+    k_fixed: int = 1
+    update_dim_mode: str = "all"     # "all" or "single"
 
     # internal state (filled in __post_init__)
     rng: np.random.Generator = field(init=False)
@@ -71,6 +78,12 @@ class ABCNG:
     k_hist: List[float] = field(init=False, default_factory=list)
 
     def __post_init__(self):
+        if self.neighbor_mode not in ("neighbor", "self"):
+            raise ValueError(f"neighbor_mode must be 'neighbor' or 'self', got {self.neighbor_mode}")
+        if self.noise_model not in ("gaussian", "cauchy", "uniform"):
+            raise ValueError(f"noise_model must be one of gaussian/cauchy/uniform, got {self.noise_model}")
+        if self.update_dim_mode not in ("all", "single"):
+            raise ValueError(f"update_dim_mode must be 'all' or 'single', got {self.update_dim_mode}")
         if self.paper_mode:
             # Paper configuration: SN=50, limit = SN*D, max_evals = 5000*D
             self.pop_size = 50
@@ -92,9 +105,10 @@ class ABCNG:
         self.gbest_val = float(self.fitness[self.gbest_idx])
 
         # start with the smallest legal neighborhood radius
-        self.k = np.full(self.pop_size, 1, dtype=int)
-        self.k_min = 1
-        self.k_max = (self.pop_size - 1) // 2
+        init_k = int(self.k_fixed) if not self.use_adaptive_k else 1
+        self.k = np.full(self.pop_size, init_k, dtype=int)
+        self.k_min = 1 if self.use_adaptive_k else init_k
+        self.k_max = (self.pop_size - 1) // 2 if self.use_adaptive_k else init_k
 
         self.hist = [self.gbest_val]
         self.k_hist = [float(np.mean(self.k))]
@@ -136,17 +150,20 @@ class ABCNG:
     def _search_eq(self, i: int) -> np.ndarray:
         """Equation (7): neighborhood + gbest guidance."""
         # choose x_ni from neighborhood (excluding i if you want; paper uses dynamic neighborhood of Xi randomly (i != ni))
-        neigh = self._neighbors_indices(i)
-        if len(neigh) > 1 and i in neigh:
-            neigh_no_i = [idx for idx in neigh if idx != i]
+        if self.neighbor_mode == "self":
+            ni = i
         else:
-            neigh_no_i = neigh
+            neigh = self._neighbors_indices(i)
+            if len(neigh) > 1 and i in neigh:
+                neigh_no_i = [idx for idx in neigh if idx != i]
+            else:
+                neigh_no_i = neigh
 
-        if not neigh_no_i:  # degenerate, fallback random different index
-            choices = [idx for idx in range(self.pop_size) if idx != i]
-            ni = self.rng.choice(choices)
-        else:
-            ni = int(self.rng.choice(neigh_no_i))
+            if not neigh_no_i:  # degenerate, fallback random different index
+                choices = [idx for idx in range(self.pop_size) if idx != i]
+                ni = self.rng.choice(choices)
+            else:
+                ni = int(self.rng.choice(neigh_no_i))
 
         # choose x_no from outside neighborhood
         outside = self._outside_indices(i)
@@ -155,25 +172,46 @@ class ABCNG:
         no = int(self.rng.choice(outside))
 
         phi = self.rng.uniform(-1.0, 1.0, size=self.dim)  # phi in [-1, 1]
-        varphi = self.rng.uniform(0.0, 1.5, size=self.dim)  # varphi in [0, 1.5]
+        if self.use_gbest:
+            varphi = self.rng.uniform(0.0, 1.5, size=self.dim)  # varphi in [0, 1.5]
+        else:
+            varphi = 0.0
 
         xni = self.X[ni]
         xno = self.X[no]
-        v = xni + phi * (xni - xno) + varphi * (self.gbest - xni)
+        gterm = (self.gbest - xni) if self.use_gbest else 0.0
+        if self.update_dim_mode == "single":
+            v = xni.copy()
+            j = int(self.rng.integers(0, self.dim))
+            if np.isscalar(varphi):
+                gterm_j = varphi * gterm
+            else:
+                gterm_j = varphi[j] * gterm[j]
+            v[j] = xni[j] + phi[j] * (xni[j] - xno[j]) + gterm_j
+        else:
+            v = xni + phi * (xni - xno) + varphi * gterm
 
         # bound handling (simple clip)
         return np.clip(v, self.lower, self.upper)
 
-    def _gaussian_perturb(self, xi: np.ndarray, delta_i: float, delta_a: float) -> np.ndarray:
-        """Equation (10): v = x * (1 + N(mean=delta_i, std=delta_a)) (ABCNG-ia)."""
+    def _noise_perturb(self, xi: np.ndarray, delta_i: float, delta_a: float) -> np.ndarray:
+        """Equation (10): v = x * (1 + g(delta_i, delta_a)) with configurable noise."""
         if delta_a < 1e-12:
-            # avoid zero std -> use a tiny noise
             delta_a = 1e-12
-        noise = self.rng.normal(loc=delta_i, scale=delta_a, size=self.dim)
+        if self.noise_model == "gaussian":
+            noise = self.rng.normal(loc=delta_i, scale=delta_a, size=self.dim)
+        elif self.noise_model == "cauchy":
+            noise = self.rng.standard_cauchy(size=self.dim) * delta_a + delta_i
+        elif self.noise_model == "uniform":
+            noise = self.rng.uniform(low=delta_i - delta_a, high=delta_i + delta_a, size=self.dim)
+        else:
+            raise ValueError(f"Unknown noise_model: {self.noise_model}")
         v = xi * (1.0 + noise)
         return np.clip(v, self.lower, self.upper)
 
     def _update_k(self, i: int, improved: bool):
+        if not self.use_adaptive_k:
+            return
         if improved:
             self.k[i] = min(int(self.k[i]) + 1, self.k_max)
         else:
@@ -230,13 +268,13 @@ class ABCNG:
                     improved = self._greedy(i, v, fv)
                     self._update_k(i, improved)
 
-                    if not improved and self.evals < self.max_evals:
+                    if self.use_gaussian and (not improved) and self.evals < self.max_evals:
                         eps = 1e-12
                         delta_i = (self.fitness[i] - prev_fit[i]) / (self.fitness[i] + eps)
                         delta_all = (self.fitness - prev_fit) / (self.fitness + eps)
                         delta_a = float(np.mean(delta_all))
 
-                        gp = self._gaussian_perturb(self.X[i], delta_i, delta_a)
+                        gp = self._noise_perturb(self.X[i], delta_i, delta_a)
                         fgp = self._evaluate(gp)
                         self._greedy(i, gp, fgp)
 
@@ -260,13 +298,13 @@ class ABCNG:
                     improved = self._greedy(i, v, fv)
                     self._update_k(i, improved)
 
-                    if not improved and self.evals < self.max_evals:
+                    if self.use_gaussian and (not improved) and self.evals < self.max_evals:
                         eps = 1e-12
                         delta_i = (self.fitness[i] - prev_fit[i]) / (self.fitness[i] + eps)
                         delta_all = (self.fitness - prev_fit) / (self.fitness + eps)
                         delta_a = float(np.mean(delta_all))
 
-                        gp = self._gaussian_perturb(self.X[i], delta_i, delta_a)
+                        gp = self._noise_perturb(self.X[i], delta_i, delta_a)
                         fgp = self._evaluate(gp)
                         improved2 = self._greedy(i, gp, fgp)
                         self._update_k(i, improved2)
@@ -318,6 +356,3 @@ def demo_run():
 
     elapsed = time.time() - start_time
     return df, elapsed
-
-
-
