@@ -217,3 +217,6 @@ __marimo__/
 
 pdf_*
 *.txt
+
+figs/
+.DS_Store
