@@ -1,6 +1,6 @@
 ﻿import os
 import time
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import numpy as np
 import pandas as pd
@@ -10,12 +10,21 @@ from models.abcng import ABCNG, BENCHES
 from models.abc import ABC
 
 
-def run_single(name: str, dim: int, budget: int, seed: int, pop_size: int = 40, algo: str = "abcng") -> Tuple[List[float], List[float], float, float]:
+def run_single(
+    name: str,
+    dim: int,
+    budget: int,
+    seed: int,
+    pop_size: int = 40,
+    algo: str = "abcng",
+    abcng_kwargs: Optional[Dict[str, object]] = None,
+) -> Tuple[List[float], List[float], float, float]:
     f, (lo, hi) = BENCHES[name]
     if algo.lower() == "abc":
         opt = ABC(func=f, dim=dim, bounds=(lo, hi), pop_size=pop_size, max_evals=budget, seed=seed)
     else:
-        opt = ABCNG(func=f, dim=dim, bounds=(lo, hi), pop_size=pop_size, max_evals=budget, seed=seed)
+        kwargs = abcng_kwargs or {}
+        opt = ABCNG(func=f, dim=dim, bounds=(lo, hi), pop_size=pop_size, max_evals=budget, seed=seed, **kwargs)
     t0 = time.time()
     _, gval, hist = opt.run()
     elapsed = time.time() - t0
@@ -40,13 +49,23 @@ def pad_histories(hists: List[List[float]], mode: str = "truncate") -> np.ndarra
     return arr
 
 
-def summarize_runs(name: str, dim: int, budget: int, runs: int, seeds: List[int], algo: str = "abcng") -> Dict[str, object]:
+def summarize_runs(
+    name: str,
+    dim: int,
+    budget: int,
+    runs: int,
+    seeds: List[int],
+    algo: str = "abcng",
+    abcng_kwargs: Optional[Dict[str, object]] = None,
+) -> Dict[str, object]:
     hists: List[List[float]] = []
     k_hists: List[List[float]] = []
     finals: List[float] = []
     times: List[float] = []
     for s in seeds[:runs]:
-        hist, k_hist, gval, elapsed = run_single(name, dim, budget, seed=s, algo=algo)
+        hist, k_hist, gval, elapsed = run_single(
+            name, dim, budget, seed=s, algo=algo, abcng_kwargs=abcng_kwargs
+        )
         hists.append(hist)
         k_hists.append(k_hist)
         finals.append(gval)
@@ -238,7 +257,7 @@ if __name__ == "__main__":
     main()
 
 
-def notebook_quick_demo(runs: int = 5, budget: int = 5000, functions: List[str] | None = None):
+def notebook_quick_demo(runs: int = 5, budget: int = 5000, functions: Optional[List[str]] = None):
     """Small demo for notebooks: fewer runs/budget and inline return values.
 
     Returns a tuple (df_summary, paths) where paths is a dict with lists of
