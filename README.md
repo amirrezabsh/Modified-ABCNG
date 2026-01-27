@@ -43,8 +43,8 @@ ABCNG enhances the standard Artificial Bee Colony (ABC) by:
 ## ⚙️ Installation
 
 ```bash
-git clone https://github.com/<your-username>/ABCNG.git
-cd ABCNG
+git clone https://github.com/amirrezabsh/Modified-ABCNG.git
+cd Modified-ABCNG
 pip install -r requirements.txt
 ```
 
@@ -62,23 +62,17 @@ tqdm>=4.66.0
 
 ## 🚀 Quick Start
 
-### Run the Demo
+### Run the demo notebook
 
-A short benchmark demo is already included:
+Open and run:
 
-```bash
-python abcng_demo.py
-```
-
-This will:
-
-* Run the ABCNG optimizer on Sphere, Rastrigin, Rosenbrock, and Ackley functions.
-* Display and export results as a Pandas table.
+- `main.ipynb` for a quick benchmark demo and plots (includes notes on settings).
+- `ablation_runs.ipynb` for ablation studies and comparison plots (paper protocol notes included).
 
 ### Use ABCNG in your project
 
 ```python
-from abcng import ABCNG
+from models.abcng import ABCNG
 import numpy as np
 
 # Example: Sphere function
@@ -91,12 +85,16 @@ best_x, best_val, history = optimizer.run()
 print("Best solution:", best_val)
 ```
 
+### Paper settings
+
+To match the paper’s protocol, set `paper_mode=True` (forces SN=50, limit=SN·D, max_evals=5000·D, and the onlooker loop behavior).
+
 ---
 
 ## 🧪 Features
 
 * ✅ Fully functional **ABCNG (Adaptive + Gaussian Perturbation)** variant
-* ✅ Modular, extendable Python class (`abcng.py`)
+* ✅ Modular, extendable Python class (`models/abcng.py`)
 * ✅ Supports **any continuous optimization problem**
 * ✅ Includes classic benchmarks (Sphere, Rastrigin, Ackley, etc.)
 * ✅ Ready for **further optimization and hybridization** (e.g., with DE, PSO, or RL)
