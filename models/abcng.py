@@ -61,7 +61,8 @@ class ABCNG:
     neighbor_mode: str = "neighbor"  # "neighbor" or "self"
     noise_model: str = "gaussian"    # "gaussian", "cauchy", "uniform"
     k_fixed: int = 1
-    update_dim_mode: str = "all"     # "all" or "single"
+    update_dim_mode: str = "all"     # "all", "single", or "k_random"
+    update_dim_k: int = 2            # used when update_dim_mode == "k_random"
 
     # internal state (filled in __post_init__)
     rng: np.random.Generator = field(init=False)
@@ -82,8 +83,18 @@ class ABCNG:
             raise ValueError(f"neighbor_mode must be 'neighbor' or 'self', got {self.neighbor_mode}")
         if self.noise_model not in ("gaussian", "cauchy", "uniform"):
             raise ValueError(f"noise_model must be one of gaussian/cauchy/uniform, got {self.noise_model}")
-        if self.update_dim_mode not in ("all", "single"):
-            raise ValueError(f"update_dim_mode must be 'all' or 'single', got {self.update_dim_mode}")
+        if self.update_dim_mode not in ("all", "single", "k_random"):
+            raise ValueError(
+                "update_dim_mode must be 'all', 'single', or 'k_random', got "
+                f"{self.update_dim_mode}"
+            )
+        if self.update_dim_mode == "k_random":
+            if self.dim < 2:
+                raise ValueError("update_dim_mode 'k_random' requires dim >= 2")
+            if not isinstance(self.update_dim_k, int) or self.update_dim_k < 1:
+                raise ValueError("update_dim_k must be a positive integer")
+            if self.update_dim_k >= self.dim:
+                raise ValueError("update_dim_k must be in [1, dim-1] to avoid updating all dims")
         if self.paper_mode:
             # Paper configuration: SN=50, limit = SN*D, max_evals = 5000*D
             self.pop_size = 50
@@ -188,6 +199,12 @@ class ABCNG:
             else:
                 gterm_j = varphi[j] * gterm[j]
             v[j] = xni[j] + phi[j] * (xni[j] - xno[j]) + gterm_j
+        elif self.update_dim_mode == "k_random":
+            v = xni.copy()
+            k = int(self.update_dim_k)
+            idx = self.rng.choice(self.dim, size=k, replace=False)
+            delta = phi * (xni - xno) + (varphi * gterm)
+            v[idx] = xni[idx] + delta[idx]
         else:
             v = xni + phi * (xni - xno) + varphi * gterm
 

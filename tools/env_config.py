@@ -43,6 +43,7 @@ def get_abcng_kwargs(env: Dict[str, str]) -> Dict[str, object]:
         "ABCNG_NOISE_MODEL": "noise_model",
         "ABCNG_K_FIXED": "k_fixed",
         "ABCNG_UPDATE_DIM_MODE": "update_dim_mode",
+        "ABCNG_UPDATE_DIM_K": "update_dim_k",
     }
     kwargs: Dict[str, object] = {}
     for env_key, kw_key in mapping.items():

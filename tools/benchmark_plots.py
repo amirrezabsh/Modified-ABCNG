@@ -179,6 +179,7 @@ def plot_box_compare(finals_map: Dict[str, Dict[str, np.ndarray]], out_dir: str,
     plt.yscale("log")
     plt.ylabel("Final best objective (log)")
     plt.title("Final performance: comparison per function")
+    plt.xticks(rotation=45, ha="right")
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, "box_compare.png")
     plt.tight_layout()

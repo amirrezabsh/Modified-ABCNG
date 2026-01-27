@@ -190,6 +190,7 @@ def default_variants() -> List[Dict[str, object]]:
         {"name": "no_gaussian", "algo": "abcng", "abcng_kwargs": {"paper_mode": True, "use_gaussian": False}},
         {"name": "self_in_eq7", "algo": "abcng", "abcng_kwargs": {"paper_mode": True, "neighbor_mode": "self"}},
         {"name": "single_dim_update", "algo": "abcng", "abcng_kwargs": {"paper_mode": True, "update_dim_mode": "single"}},
+        {"name": "k_random_dim_update", "algo": "abcng", "abcng_kwargs": {"paper_mode": True, "update_dim_mode": "k_random", "update_dim_k": 5}},
         {"name": "noise_cauchy", "algo": "abcng", "abcng_kwargs": {"paper_mode": True, "noise_model": "cauchy"}},
         {"name": "noise_uniform", "algo": "abcng", "abcng_kwargs": {"paper_mode": True, "noise_model": "uniform"}},
     ]
