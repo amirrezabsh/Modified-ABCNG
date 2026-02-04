@@ -220,3 +220,5 @@ pdf_*
 
 figs/
 .DS_Store
+*.docx
+Appendix A.pdf
